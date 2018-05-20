@@ -53,7 +53,7 @@ extern const Error ProcessInvalidState;
 
 struct Process_ExitInfo {
     int exitValue;
-    bool normallyExited;
+    bool exitNormally;
 };
 
 struct Process {
@@ -66,7 +66,7 @@ struct Process {
     int _errorFileDescriptor;
     int _outputFileDescriptor;
     int _exitValue;
-    bool _normallyExited;
+    bool _exitNormally;
     bool _isAlive;
 };
 
@@ -74,6 +74,9 @@ extern ErrorOf(Ok, ProcessUnableToFork) Process_spawn(struct Process *self, void
 __attribute__((__warn_unused_result__, __nonnull__));
 
 extern ErrorOf(Ok, ProcessInvalidState) Process_wait(struct Process *self, struct Process_ExitInfo *out)
+__attribute__((__warn_unused_result__, __nonnull__(1)));
+
+extern ErrorOf(Ok, ProcessInvalidState) Process_cancel(struct Process *self, struct Process_ExitInfo *out)
 __attribute__((__warn_unused_result__, __nonnull__(1)));
 
 extern ErrorOf(Ok, ProcessInvalidState) Process_exitInfo(const struct Process *self, struct Process_ExitInfo *out)
@@ -91,14 +94,19 @@ __attribute__((__warn_unused_result__, __nonnull__));
 extern int Process_id(const struct Process *self)
 __attribute__((__warn_unused_result__, __nonnull__));
 
-extern bool Process_isAlive(const struct Process *self)
+extern bool Process_isAlive(struct Process *self)
 __attribute__((__warn_unused_result__, __nonnull__));
-
-extern void Process_cancel(struct Process *self)
-__attribute__((__nonnull__));
 
 extern void Process_teardown(struct Process *self)
 __attribute__((__nonnull__));
+
+extern int Process_getCurrentId(void)
+__attribute__((__warn_unused_result__));
+
+extern int Process_getParentId(void)
+__attribute__((__warn_unused_result__));
+
+extern void Process_sleep(unsigned seconds);
 
 #ifdef __cplusplus
 }

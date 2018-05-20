@@ -71,6 +71,9 @@ __attribute__((__nonnull__));
 const Error ProcessUnableToFork = Error_new("Unable to fork");
 const Error ProcessInvalidState = Error_new("Invalid process state");
 
+static void Process_setExitInfoFromStatus(struct Process *self, int status)
+__attribute__((__nonnull__));
+
 Error Process_spawn(struct Process *const self, void (*const f)(void)) {
     assert(self);
     assert(f);
@@ -123,7 +126,7 @@ Error Process_spawn(struct Process *const self, void (*const f)(void)) {
             self->_outputFileDescriptor = pipeStdout.inputFileDescriptor;
             self->_exitValue = 0;
             self->_isAlive = true;
-            self->_normallyExited = false;
+            self->_exitNormally = false;
             return Ok;
         }
     }
@@ -137,17 +140,48 @@ Error Process_wait(struct Process *const self, struct Process_ExitInfo *const ou
         int status;
         ensure(waitpid(self->_id, &status, 0) == self->_id);
 
-        if (WIFEXITED(status)) {
-            self->_normallyExited = true;
-            self->_exitValue = WEXITSTATUS(status);
-        } else if (WIFSIGNALED(status)) {
-            self->_normallyExited = false;
-            self->_exitValue = WTERMSIG(status);
-        } else {
-            die();
+        Process_setExitInfoFromStatus(self, status);
+
+        if (out) {
+            const Error e = Process_exitInfo(self, out);
+            assert(e == Ok);
+            (void) e;
+        }
+        return Ok;
+    } else {
+        return ProcessInvalidState;
+    }
+}
+
+Error Process_cancel(struct Process *const self, struct Process_ExitInfo *const out) {
+    assert(self);
+    assert(self->_magicNumber == MAGIC_NUMBER);
+
+    if (self->_isAlive) {
+        int status;  // this must not be initialized
+        const pid_t pid = self->_id;
+
+        for (int i = 0; (i < 8) && (kill(pid, SIGTERM) != 0); i++) {}
+        for (int i = 0; i < 2; i++) {
+            const int w = waitpid(pid, &status, WNOHANG);
+            if (w == pid) {
+                Process_setExitInfoFromStatus(self, status);
+                if (out) {
+                    const Error e = Process_exitInfo(self, out);
+                    assert(e == Ok);
+                    (void) e;
+                }
+                return Ok;
+            } else if (w == 0) {
+                sleep(1);
+            } else {
+                die();
+            }
         }
 
-        self->_isAlive = false;
+        for (int i = 0; (i < 8) && (kill(pid, SIGKILL) != 0); i++) {}
+        ensure(waitpid(pid, &status, 0) == pid);
+        Process_setExitInfoFromStatus(self, status);
         if (out) {
             const Error e = Process_exitInfo(self, out);
             assert(e == Ok);
@@ -167,7 +201,7 @@ Error Process_exitInfo(const struct Process *const self, struct Process_ExitInfo
     if (self->_isAlive) {
         return ProcessInvalidState;
     } else {
-        out->normallyExited = self->_normallyExited;
+        out->exitNormally = self->_exitNormally;
         out->exitValue = self->_exitValue;
         return Ok;
     }
@@ -203,34 +237,20 @@ int Process_id(const struct Process *const self) {
     return self->_id;
 }
 
-bool Process_isAlive(const struct Process *const self) {
+bool Process_isAlive(struct Process *const self) {
     assert(self);
     assert(self->_magicNumber == MAGIC_NUMBER);
-    return self->_isAlive;
-}
+    if (self->_isAlive) {
+        int status;
+        const pid_t pid = self->_id;
 
-void Process_cancel(struct Process *const self) {
-    assert(self);
-    assert(self->_magicNumber == MAGIC_NUMBER);
-    assert(self->_isAlive);
-    int status;
-    const int pid = self->_id;
-
-    ensure(kill(pid, SIGTERM) == 0);
-    for (int i = 0; i < 3; i++) {
-        ensure(waitpid(pid, &status, WNOHANG) >= 0);
-        if (!WIFEXITED(status) && !WIFSIGNALED(status)) {
-            sleep(1);
+        const int w = waitpid(pid, &status, WNOHANG);
+        ensure(w >= 0);
+        if (w == pid) {
+            Process_setExitInfoFromStatus(self, status);
         }
     }
-
-    if (!WIFEXITED(status) && !WIFSIGNALED(status)) {
-        ensure(kill(pid, SIGKILL) == 0);
-    }
-
-    const Error e = Process_wait(self, NULL);
-    assert(e == Ok);
-    (void) e;
+    return self->_isAlive;
 }
 
 void Process_teardown(struct Process *const self) {
@@ -241,6 +261,34 @@ void Process_teardown(struct Process *const self) {
     ensure(close(self->_errorFileDescriptor) == 0);
     ensure(close(self->_outputFileDescriptor) == 0);
     memset(self, 0, sizeof(*self));
+}
+
+int Process_getCurrentId(void) {
+    return getpid();
+}
+
+int Process_getParentId(void) {
+    return getppid();
+}
+
+void Process_sleep(unsigned seconds) {
+    sleep(seconds);
+}
+
+void Process_setExitInfoFromStatus(struct Process *const self, const int status) {
+    assert(self);
+    assert(self->_magicNumber == MAGIC_NUMBER);
+    assert(self->_isAlive);
+    if (WIFEXITED(status)) {
+        self->_exitNormally = true;
+        self->_exitValue = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        self->_exitNormally = false;
+        self->_exitValue = WTERMSIG(status);
+    } else {
+        die();
+    }
+    self->_isAlive = false;
 }
 
 /*

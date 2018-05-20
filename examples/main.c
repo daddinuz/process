@@ -28,7 +28,6 @@
 
 #include <time.h>
 #include <stdlib.h>
-#include <unistd.h>  // just for sleep() and getpid()
 #include <process.h>
 #include <panic/panic.h>
 
@@ -38,7 +37,7 @@ char buffer[bufferSize + 1] = "";
 size_t readLine(FILE *const stream, char *const buffer, const size_t size) {
     size_t i;
     for (i = 0; feof(stream) && i < size; i++) {
-        const char c = fgetc(stream);
+        const char c = (char) fgetc(stream);
         if ('\n' == c) {
             break;
         }
@@ -48,10 +47,9 @@ size_t readLine(FILE *const stream, char *const buffer, const size_t size) {
 }
 
 void doSomething(void) {
-    const pid_t pid = getpid();
-
+    const int pid = Process_getCurrentId();
     srand((unsigned) pid);
-    sleep(10 - (unsigned) rand() % 5);
+    Process_sleep(6 - (unsigned) rand() % 5);
     const size_t bytesRead = readLine(stdin, buffer, bufferSize);
     printf("%s:%d:%.*s:%lu", __func__, pid, (int) bytesRead, buffer, time(NULL));
 }
@@ -69,7 +67,9 @@ int main() {
     }
 
     printf("Canceling: %d\n", Process_id(&processList[2]));
-    Process_cancel(&processList[2]);
+    if (Process_cancel(&processList[2], NULL) != Ok) {
+        Panic_terminate("Unable to cancel process: %d", Process_id(&processList[2]));
+    }
     printf("Canceled: %d\n", Process_id(&processList[2]));
 
     for (struct Process *process = processList; process < processListEnd; process++) {
@@ -93,8 +93,8 @@ int main() {
         if (bytesRead < 0) {
             Panic_terminate("Unexpected error while reading from output stream of process: %d", Process_id(process));
         }
-        printf("Process: %d normallyExited: %d exitValue: %2d output: %.*s\n",
-               Process_id(process), info.normallyExited, info.exitValue, (int) bytesRead, buffer);
+        printf("Process: %d exitNormally: %d exitValue: %2d output: %.*s\n",
+               Process_id(process), info.exitNormally, info.exitValue, (int) bytesRead, buffer);
         Process_teardown(process);
     }
 
